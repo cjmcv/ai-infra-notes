@@ -1,0 +1,66 @@
+# Folder
+.vscode/
+
+opencl/env/bin
+opencl/env/build-win-x86
+opencl/env/build-android-armv7
+
+engine/infer/*/*/__pycache__
+engine/infer/*/__pycache__
+engine/infer/tools/*/__pycache__
+engine/infer/tools/*/*/__pycache__
+tests/bin
+tests/build-win-x86
+tests/build-x86/
+example/*/build-win-x86
+example/*/build-android-aarch64
+example/*/build-android-armv7
+example/*/bin
+example/*/build
+example/*/opencl/lib
+example/*/opencl/lib64
+example/vk/shaders/spv/*
+example/*/*.log
+
+# Model test
+example/infer/*_params.h
+example/infer/*_model.h
+example/infer/*.csv
+example/infer/gen
+example/infer/datasets
+
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Debug
+tests/*.log
