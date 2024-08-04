@@ -204,7 +204,7 @@ __global__ void GemmKernelv2(const int M, const int N, const int K,
     __shared__ float b_shared[BLOCK_SIZE][BLOCK_SIZE];
 
     float c_sub_acc = 0;
-    // 按 K 方向分块读入共享内存
+    // 按 K 方向分块读入共享内存，一次读一个block
     for (int bk = 0; bk < K; bk += BLOCK_SIZE) {
         a_shared[threadIdx.y][threadIdx.x] = A[i * lda + (bk + threadIdx.x)];
         b_shared[threadIdx.y][threadIdx.x] = B[(bk + threadIdx.y) * ldb + j];
@@ -222,6 +222,75 @@ __global__ void GemmKernelv2(const int M, const int N, const int K,
     C[i * ldc + j] += c_sub_acc;
 }
 
+// CUDA version 3.
+//   分析v2，计算的过程实质为全局内存->共享内存->寄存器内存，则v2的k循环中需重复访问的数据存在于共享内存中。
+// 就会有重复的从共享内存读取数据到寄存器。可考虑子在一次读取到共享内存后，再进分块一次读取到寄存器中，
+// 使重复读取数据进行计算的操作放到更快的寄存器中完成。
+template <int BLOCK_SIZE>
+__global__ void GemmKernelv3(const int M, const int N, const int K,
+                             const float *A, const int lda,
+                             const float *B, const int ldb,
+                             float *C, const int ldc) {
+    
+    int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int gid_y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const int STEP = 2;
+    float a_reg[STEP] = {0};
+    float b_reg[STEP] = {0};
+    float c_reg[STEP][STEP] = {{0}};
+    __shared__ float a_shared[BLOCK_SIZE*STEP][BLOCK_SIZE*STEP];
+    __shared__ float b_shared[BLOCK_SIZE*STEP][BLOCK_SIZE*STEP];
+
+    int gid_sx = gid_x * STEP;
+    int gid_sy = gid_y * STEP;    
+    int tid_sx = threadIdx.x * STEP;
+    int tid_sy = threadIdx.y * STEP;
+
+    // 按 K 方向分块读入共享内存，一次读取临近的四个block, 一个线程处理四个元素
+    for (int bk = 0; bk < K; bk += BLOCK_SIZE*STEP) {
+        for (int si=0; si<STEP; si++) {
+            for (int sj=0; sj<STEP; sj++) {
+                a_shared[tid_sy+si][tid_sx+sj] = A[(gid_sy+si) * lda + (bk + tid_sx+sj)];
+                b_shared[tid_sy+si][tid_sx+sj] = B[(bk + tid_sy+si) * ldb + gid_sx+sj];
+            }
+        }
+        
+        // 等待块内线程同步
+        __syncthreads();
+
+        // 计算块内元素, 每个线程处理临近四个元素
+        // for (int k = 0; k < BLOCK_SIZE*STEP; k++) {
+        //     for (int si=0; si<STEP; si++) {
+        //         for (int sj=0; sj<STEP; sj++) {
+        //             c_reg[si][sj] += a_shared[tid_sy+si][k] * b_shared[k][tid_sx+sj];
+        //         }
+        //     }
+        // }
+        for (int k = 0; k < BLOCK_SIZE*STEP; k++) {
+            for (int s = 0; s < STEP; s++) {
+                a_reg[s] = a_shared[tid_sy+s][k];
+                b_reg[s] = b_shared[k][tid_sx+s];
+            }
+            for (int si=0; si<STEP; si++) {
+                for (int sj=0; sj<STEP; sj++) {
+                    c_reg[si][sj] += a_reg[si] * b_reg[sj];
+                }
+            }
+        }
+
+        // 再次同步，避免该块内个别线程已经计算完进入下一次循环中，往共享内存写数据，与正在共享内存正在计算中的数据相冲突
+        __syncthreads();
+    }
+
+    for (int si=0; si<STEP; si++) {
+        for (int sj=0; sj<STEP; sj++) {
+            C[(gid_sy+si) * ldc + gid_sx+sj] += c_reg[si][sj];
+            // printf("%f(%d, %d) \n", C[(gid_sy+si) * ldc + gid_sx+sj], (gid_sy+si), gid_sx+sj);
+        }
+    }
+}
+
 float MatrixMulCUDA(int version_id, const int M, const int N, const int K,
                     const float *A, const int lda,
                     const float *B, const int ldb,
@@ -233,24 +302,34 @@ float MatrixMulCUDA(int version_id, const int M, const int N, const int K,
     dim3 blocks_per_grid((N + threads_per_block.x - 1) / threads_per_block.x, (M + threads_per_block.y - 1) / threads_per_block.y);
     
     // Warm up.
-    GemmKernelv1<< <blocks_per_grid, threads_per_block >> >
-      (M, N, K, A, lda, B, ldb, C, ldc);
+    for (int i=0; i<10; i++) {
+        GemmKernelv1<< <blocks_per_grid, threads_per_block >> >
+            (M, N, K, A, lda, B, ldb, C, ldc);        
+    }
     cudaMemset(C, 0, sizeof(float) * M * N);
 
     // Record the start event
     gpu_timer.Start();
 
     if (version_id == 1) {
-      GemmKernelv1<< <blocks_per_grid, threads_per_block >> >
-        (M, N, K, A, lda, B, ldb, C, ldc);        
+        GemmKernelv1<< <blocks_per_grid, threads_per_block >> >
+            (M, N, K, A, lda, B, ldb, C, ldc);        
     }
     else if (version_id == 2) {
-      GemmKernelv2<block_side_size> << <blocks_per_grid, threads_per_block >> >
-        (M, N, K, A, lda, B, ldb, C, ldc);    
+        GemmKernelv2<block_side_size> << <blocks_per_grid, threads_per_block >> >
+            (M, N, K, A, lda, B, ldb, C, ldc);    
     }
     else if (version_id == 3) {
-      GemmKernelv3<block_side_size> << <blocks_per_grid, threads_per_block >> >
-        (M, N, K, A, lda, B, ldb, C, ldc);    
+        // 一个线程处理四个数据，一个block内线程数xy都减半，然后block的数量不变。
+        const int step = 2;
+        // const int block_side_size_new = block_side_size / step;
+        // dim3 threads_per_block_r(block_side_size_new, block_side_size_new);
+        // GemmKernelv3<block_side_size_new> << <blocks_per_grid, threads_per_block_r >> >
+        //     (M, N, K, A, lda, B, ldb, C, ldc);
+
+        dim3 blocks_per_grid_r(blocks_per_grid.x/step, blocks_per_grid.y/step);
+        GemmKernelv3<block_side_size> << <blocks_per_grid_r, threads_per_block >> >
+            (M, N, K, A, lda, B, ldb, C, ldc);    
     }
 
     // Record the stop event
@@ -275,8 +354,8 @@ int main() {
         return -1;
     }
 
-    int height_a = 2560, width_a = 800;
-    int height_b = 800, width_b = 3200;
+    int height_a = 1280, width_a = 4096;
+    int height_b = 4096, width_b = 2048;
     if (width_a != height_b) {
         printf("width_a should be equal to height_b.\n");
         return 1;
@@ -320,13 +399,15 @@ int main() {
 
     TEST_CUDA_MODULE_UKERNEL(1);
     TEST_CUDA_MODULE_UKERNEL(2);
-    
+    TEST_CUDA_MODULE_UKERNEL(3);
+
     // GPU Device 0: "Tesla T4" with compute capability 7.5 with 40 multi-processors.
 
-    // cpu version 1 -> time: 23.848959 s, mean value = 972596249627025473536.000000
-    // cpu version 1 -> time: 29.319994 s, mean value = 972596249627025473536.000000
-    // gpu version 1 -> time: 0.040371 s, mean value = 972596249627025473536.000000
-    // gpu version 2 -> time: 0.031588 s, mean value = 972596249627025473536.000000
+    // cpu version 1 -> time: 352.808640 s, mean value = 4721666173127589101568.000000
+    // cpu version 2 -> time: 252.558702 s, mean value = 4721666173127589101568.000000
+    // gpu version 1 -> time: 0.035052 s, mean value = 4721666173127589101568.000000
+    // gpu version 2 -> time: 0.027406 s, mean value = 4721666173127589101568.000000
+    // gpu version 3 -> time: 0.013027 s, mean value = 4721666173127589101568.000000
     
     free(h_a);
     free(h_b);
