@@ -1,84 +1,12 @@
-%%cuda
+// %%cuda
 /*!
 * \brief gemm: C = A * B.
 */
 #include <iostream>
-#include <cuda_runtime.h>
-#include "device_launch_parameters.h"
 #include "time.h"
 
-////////////////
-// Macro.
-////////////////
-#define CUDA_CHECK(condition) \
-    do { \
-        cudaError_t error = condition; \
-        if (error != cudaSuccess) { \
-            fprintf(stderr, "CUDA_CHECK error in line %d of file %s : %s \n", \
-                    __LINE__, __FILE__, cudaGetErrorString(cudaGetLastError()) ); \
-            exit(EXIT_FAILURE); \
-        } \
-    } while(0);
-
-////////////////
-// Structure.
-////////////////
-
-// Timer for cuda.
-struct GpuTimer {
-    GpuTimer() {
-        cudaEventCreate(&start_);
-        cudaEventCreate(&stop_);
-    }
-    ~GpuTimer() {
-        cudaEventDestroy(start_);
-        cudaEventDestroy(stop_);
-    }
-    void Start() {
-        cudaEventRecord(start_, NULL);
-    }
-    void Stop() {
-        cudaEventRecord(stop_, NULL);
-    }
-    float ElapsedMillis() {
-        float elapsed;
-        cudaEventSynchronize(stop_);
-        cudaEventElapsedTime(&elapsed, start_, stop_);
-        return elapsed;
-    }
-
-    cudaEvent_t start_;
-    cudaEvent_t stop_;
-};
-
-////////////////
-// Function.
-////////////////
-
-// 
-int InitEnvironment(const int dev_id) {
-    CUDA_CHECK(cudaSetDevice(dev_id));
-    cudaDeviceProp device_prop;
-    CUDA_CHECK(cudaGetDeviceProperties(&device_prop, dev_id));
-    if (device_prop.computeMode == cudaComputeModeProhibited) {
-        fprintf(stderr, "Error: device is running in <Compute Mode Prohibited>, no threads can use ::cudaSetDevice().\n");
-        return 1;
-    }
-    fprintf(stderr, "GPU Device %d: \"%s\" with compute capability %d.%d with %d multi-processors.\n\n", 
-      dev_id, device_prop.name, device_prop.major, device_prop.minor, device_prop.multiProcessorCount);
-
-    return 0;
-}
-
-void CleanUpEnvironment() {
-    // Reset the device and exit
-    // cudaDeviceReset causes the driver to clean up all state. While
-    // not mandatory in normal operation, it is good practice.  It is also
-    // needed to ensure correct operation when the application is being
-    // profiled. Calling cudaDeviceReset causes all profile data to be
-    // flushed before the application exits
-    CUDA_CHECK(cudaDeviceReset());
-}
+#include "pocket-ai/engine/cu/common.hpp"
+using namespace pai::cu;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -172,18 +100,22 @@ void GemmHostV2(const int M, const int N, const int K,
 // for k -> K
 //     C[bi*bs + ty, bj*bs + tx] += A[bi*bs + ty, k] * B[k, bj*bs + tx]
 __global__ void GemmKernelv1(const int M, const int N, const int K,
-                             const float *A, const int lda,
-                             const float *B, const int ldb,
-                             float *C, const int ldc) {
+                             const float* __restrict__ A, const int lda,
+                             const float* __restrict__ B, const int ldb,
+                             float* __restrict__ C, const int ldc) {
 
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    const int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int gid_y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    if (gid_x >= N || gid_y >= M) {
+        return;
+    }
 
     float c_sub_acc = 0;
     for (int k = 0; k < K; k++) {
-        c_sub_acc += A[i * lda + k] * B[k * ldb + j];
+        c_sub_acc += A[gid_y * lda + k] * B[k * ldb + gid_x];
     }
-    C[i * ldc + j] = c_sub_acc;
+    C[gid_y * ldc + gid_x] = c_sub_acc;
 }
 
 // CUDA version 2.
@@ -195,12 +127,15 @@ __global__ void GemmKernelv1(const int M, const int N, const int K,
 // ps: 用template <int BLOCK_SIZE>的原因是kernel内以固定大小的方式开辟共享内存空间，无法使用变量blockDim
 template <int BLOCK_SIZE>
 __global__ void GemmKernelv2(const int M, const int N, const int K,
-                             const float *A, const int lda,
-                             const float *B, const int ldb,
-                             float *C, const int ldc) {
+                             const float* __restrict__ A, const int lda,
+                             const float* __restrict__ B, const int ldb,
+                             float* __restrict__ C, const int ldc) {
 
     int gid_y = blockIdx.y * blockDim.y + threadIdx.y;
     int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid_x >= N || gid_y >= M) {
+        return;
+    }
 
     __shared__ float a_shared[BLOCK_SIZE][BLOCK_SIZE];
     __shared__ float b_shared[BLOCK_SIZE][BLOCK_SIZE];
@@ -272,12 +207,15 @@ __global__ void GemmKernelv2(const int M, const int N, const int K,
 // }
 template <int BLOCK_SIZE>
 __global__ void GemmKernelv3(const int M, const int N, const int K,
-                             const float *A, const int lda,
-                             const float *B, const int ldb,
-                             float *C, const int ldc) {
+                             const float* __restrict__ A, const int lda,
+                             const float* __restrict__ B, const int ldb,
+                             float* __restrict__ C, const int ldc) {
 
     int gid_y = blockIdx.y * blockDim.y + threadIdx.y;
     int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid_x >= 2*N || gid_y >= M) {
+        return;
+    }
 
     __shared__ float a_shared[BLOCK_SIZE][BLOCK_SIZE];
     __shared__ float b_shared[BLOCK_SIZE][BLOCK_SIZE];
@@ -322,7 +260,7 @@ __global__ void GemmKernelv3(const int M, const int N, const int K,
 // CUDA version 4.
 //   分析v2，计算的过程实质为全局内存->共享内存->寄存器内存，
 // 而v2的最内层k循环中需重复访问的数据存在于共享内存中，就会有重复的从共享内存读取数据到寄存器的操作。
-// v3的优化思路是使重复读取数据进行计算的操作放到更快的寄存器中完成。、
+// v3的优化思路是使重复读取数据进行计算的操作放到更快的寄存器中完成，提高共享内存的计算访存比。
 // 
 // 如无法理解这个重复读取的过程，可以考虑把M和N的循环放回，转为串行代码，观察a和b的读取次数：
 // for (i = 0; i < M; ++i) {
@@ -369,9 +307,9 @@ __global__ void GemmKernelv3(const int M, const int N, const int K,
 // 则线程布局时，可以是block线程数不变，block数量在x和y方向上减少STEP倍；或减少block内线程数，维持block数量不变。
 template <int BLOCK_SIZE, int STEP>
 __global__ void GemmKernelv4(const int M, const int N, const int K,
-                             const float *A, const int lda,
-                             const float *B, const int ldb,
-                             float *C, const int ldc) {
+                             const float* __restrict__ A, const int lda,
+                             const float* __restrict__ B, const int ldb,
+                             float* __restrict__ C, const int ldc) {
     
     int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
     int gid_y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -383,9 +321,12 @@ __global__ void GemmKernelv4(const int M, const int N, const int K,
     __shared__ float b_shared[BLOCK_SIZE*STEP][BLOCK_SIZE*STEP];
 
     int gid_sx = gid_x * STEP;
-    int gid_sy = gid_y * STEP;    
+    int gid_sy = gid_y * STEP;
     int tid_sx = threadIdx.x * STEP;
     int tid_sy = threadIdx.y * STEP;
+    if (gid_sx >= N || gid_sy >= M) {
+        return;
+    }
 
     // 按 K 方向分块读入共享内存，一次读取临近的四个block, 一个线程处理四个元素
     for (int bk = 0; bk < K; bk += BLOCK_SIZE*STEP) {
@@ -432,7 +373,162 @@ __global__ void GemmKernelv4(const int M, const int N, const int K,
     }
 }
 
-float MatrixMulCUDA(int version_id, const int M, const int N, const int K,
+template <int BLOCK_SIZE, int STEP>
+__global__ void GemmKernelv5(const int M, const int N, const int K,
+                             const float* __restrict__ A, const int lda,
+                             const float* __restrict__ B, const int ldb,
+                             float* __restrict__ C, const int ldc) {
+    
+    int gid_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int gid_y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (gid_x >= N || gid_y >= M) {
+        return;
+    }
+
+    // float4 a_reg[STEP] = {make_float4(0.0f, 0.0f, 0.0f, 0.0f)};
+    // float4 b_reg[STEP] = {make_float4(0.0f, 0.0f, 0.0f, 0.0f)};
+    float4 c_reg[STEP] = {make_float4(0.0f, 0.0f, 0.0f, 0.0f)};
+    __shared__ float4 a_shared[BLOCK_SIZE*STEP][BLOCK_SIZE];
+    __shared__ float4 b_shared[BLOCK_SIZE*STEP][BLOCK_SIZE];
+
+    int gid_sx = gid_x * STEP;
+    int gid_sy = gid_y * STEP;    
+    int tid_sx = threadIdx.x * STEP;
+    int tid_sy = threadIdx.y * STEP;
+    if (gid_sx >= N || gid_sy >= M) {
+        return;
+    }
+
+    // 按 K 方向分块读入共享内存，一次读取临近的四个block, 一个线程处理四个元素
+    for (int bk = 0; bk < K; bk += BLOCK_SIZE*STEP) {
+        for (int si=0; si<STEP; si++) {
+            a_shared[tid_sy+si][tid_sx/STEP] = FLOAT4(A[(gid_sy+si) * lda + (bk + tid_sx)]);
+            b_shared[tid_sy+si][tid_sx/STEP] = FLOAT4(B[(bk + tid_sy+si) * ldb + gid_sx]);
+        }
+        
+        // 等待块内线程同步
+        __syncthreads();
+
+        // 计算块内元素, 每个线程处理临近四个元素
+        // for (int k = 0; k < BLOCK_SIZE*STEP; k++) {
+        //     for (int si=0; si<STEP; si++) {
+        //         for (int sj=0; sj<STEP; sj++) {
+        //             c_reg[si][sj] += a_shared[tid_sy+si][k] * b_shared[k][tid_sx+sj];
+        //         }
+        //     }
+        // }
+
+        for (int k = 0; k < BLOCK_SIZE*STEP; k+=STEP) {
+            // // 从共享内存读到寄存器的次数一致，下面写法是没有效果的
+            // a_reg[0] = a_shared[tid_sy + 0][k/STEP];
+            // a_reg[1] = a_shared[tid_sy + 1][k/STEP];
+            // a_reg[2] = a_shared[tid_sy + 2][k/STEP];
+            // a_reg[3] = a_shared[tid_sy + 3][k/STEP];
+
+            // b_reg[0] = b_shared[k+0][tid_sx / STEP];
+            // b_reg[1] = b_shared[k+1][tid_sx / STEP];
+            // b_reg[2] = b_shared[k+2][tid_sx / STEP];
+            // b_reg[3] = b_shared[k+3][tid_sx / STEP];
+
+            // K0
+            c_reg[0].x += a_shared[tid_sy + 0][k/STEP].x * b_shared[k][tid_sx / STEP].x;
+            c_reg[0].y += a_shared[tid_sy + 0][k/STEP].x * b_shared[k][tid_sx / STEP].y;
+            c_reg[0].z += a_shared[tid_sy + 0][k/STEP].x * b_shared[k][tid_sx / STEP].z;
+            c_reg[0].w += a_shared[tid_sy + 0][k/STEP].x * b_shared[k][tid_sx / STEP].w;
+
+            c_reg[1].x += a_shared[tid_sy + 1][k/STEP].x * b_shared[k][tid_sx / STEP].x;
+            c_reg[1].y += a_shared[tid_sy + 1][k/STEP].x * b_shared[k][tid_sx / STEP].y;
+            c_reg[1].z += a_shared[tid_sy + 1][k/STEP].x * b_shared[k][tid_sx / STEP].z;
+            c_reg[1].w += a_shared[tid_sy + 1][k/STEP].x * b_shared[k][tid_sx / STEP].w;
+
+            c_reg[2].x += a_shared[tid_sy + 2][k/STEP].x * b_shared[k][tid_sx / STEP].x;
+            c_reg[2].y += a_shared[tid_sy + 2][k/STEP].x * b_shared[k][tid_sx / STEP].y;
+            c_reg[2].z += a_shared[tid_sy + 2][k/STEP].x * b_shared[k][tid_sx / STEP].z;
+            c_reg[2].w += a_shared[tid_sy + 2][k/STEP].x * b_shared[k][tid_sx / STEP].w;
+
+            c_reg[3].x += a_shared[tid_sy + 3][k/STEP].x * b_shared[k][tid_sx / STEP].x;
+            c_reg[3].y += a_shared[tid_sy + 3][k/STEP].x * b_shared[k][tid_sx / STEP].y;
+            c_reg[3].z += a_shared[tid_sy + 3][k/STEP].x * b_shared[k][tid_sx / STEP].z;
+            c_reg[3].w += a_shared[tid_sy + 3][k/STEP].x * b_shared[k][tid_sx / STEP].w;
+
+            // K1
+            c_reg[0].x += a_shared[tid_sy + 0][k/STEP].y * b_shared[k+1][tid_sx / STEP].x;
+            c_reg[0].y += a_shared[tid_sy + 0][k/STEP].y * b_shared[k+1][tid_sx / STEP].y;
+            c_reg[0].z += a_shared[tid_sy + 0][k/STEP].y * b_shared[k+1][tid_sx / STEP].z;
+            c_reg[0].w += a_shared[tid_sy + 0][k/STEP].y * b_shared[k+1][tid_sx / STEP].w;
+
+            c_reg[1].x += a_shared[tid_sy + 1][k/STEP].y * b_shared[k+1][tid_sx / STEP].x;
+            c_reg[1].y += a_shared[tid_sy + 1][k/STEP].y * b_shared[k+1][tid_sx / STEP].y;
+            c_reg[1].z += a_shared[tid_sy + 1][k/STEP].y * b_shared[k+1][tid_sx / STEP].z;
+            c_reg[1].w += a_shared[tid_sy + 1][k/STEP].y * b_shared[k+1][tid_sx / STEP].w;
+
+            c_reg[2].x += a_shared[tid_sy + 2][k/STEP].y * b_shared[k+1][tid_sx / STEP].x;
+            c_reg[2].y += a_shared[tid_sy + 2][k/STEP].y * b_shared[k+1][tid_sx / STEP].y;
+            c_reg[2].z += a_shared[tid_sy + 2][k/STEP].y * b_shared[k+1][tid_sx / STEP].z;
+            c_reg[2].w += a_shared[tid_sy + 2][k/STEP].y * b_shared[k+1][tid_sx / STEP].w;
+
+            c_reg[3].x += a_shared[tid_sy + 3][k/STEP].y * b_shared[k+1][tid_sx / STEP].x;
+            c_reg[3].y += a_shared[tid_sy + 3][k/STEP].y * b_shared[k+1][tid_sx / STEP].y;
+            c_reg[3].z += a_shared[tid_sy + 3][k/STEP].y * b_shared[k+1][tid_sx / STEP].z;
+            c_reg[3].w += a_shared[tid_sy + 3][k/STEP].y * b_shared[k+1][tid_sx / STEP].w;
+
+            // K2
+            c_reg[0].x += a_shared[tid_sy + 0][k/STEP].z * b_shared[k+2][tid_sx / STEP].x;
+            c_reg[0].y += a_shared[tid_sy + 0][k/STEP].z * b_shared[k+2][tid_sx / STEP].y;
+            c_reg[0].z += a_shared[tid_sy + 0][k/STEP].z * b_shared[k+2][tid_sx / STEP].z;
+            c_reg[0].w += a_shared[tid_sy + 0][k/STEP].z * b_shared[k+2][tid_sx / STEP].w;
+
+            c_reg[1].x += a_shared[tid_sy + 1][k/STEP].z * b_shared[k+2][tid_sx / STEP].x;
+            c_reg[1].y += a_shared[tid_sy + 1][k/STEP].z * b_shared[k+2][tid_sx / STEP].y;
+            c_reg[1].z += a_shared[tid_sy + 1][k/STEP].z * b_shared[k+2][tid_sx / STEP].z;
+            c_reg[1].w += a_shared[tid_sy + 1][k/STEP].z * b_shared[k+2][tid_sx / STEP].w;
+
+            c_reg[2].x += a_shared[tid_sy + 2][k/STEP].z * b_shared[k+2][tid_sx / STEP].x;
+            c_reg[2].y += a_shared[tid_sy + 2][k/STEP].z * b_shared[k+2][tid_sx / STEP].y;
+            c_reg[2].z += a_shared[tid_sy + 2][k/STEP].z * b_shared[k+2][tid_sx / STEP].z;
+            c_reg[2].w += a_shared[tid_sy + 2][k/STEP].z * b_shared[k+2][tid_sx / STEP].w;
+
+            c_reg[3].x += a_shared[tid_sy + 3][k/STEP].z * b_shared[k+2][tid_sx / STEP].x;
+            c_reg[3].y += a_shared[tid_sy + 3][k/STEP].z * b_shared[k+2][tid_sx / STEP].y;
+            c_reg[3].z += a_shared[tid_sy + 3][k/STEP].z * b_shared[k+2][tid_sx / STEP].z;
+            c_reg[3].w += a_shared[tid_sy + 3][k/STEP].z * b_shared[k+2][tid_sx / STEP].w;
+
+            // K3
+            c_reg[0].x += a_shared[tid_sy + 0][k/STEP].w * b_shared[k+3][tid_sx / STEP].x;
+            c_reg[0].y += a_shared[tid_sy + 0][k/STEP].w * b_shared[k+3][tid_sx / STEP].y;
+            c_reg[0].z += a_shared[tid_sy + 0][k/STEP].w * b_shared[k+3][tid_sx / STEP].z;
+            c_reg[0].w += a_shared[tid_sy + 0][k/STEP].w * b_shared[k+3][tid_sx / STEP].w;
+
+            c_reg[1].x += a_shared[tid_sy + 1][k/STEP].w * b_shared[k+3][tid_sx / STEP].x;
+            c_reg[1].y += a_shared[tid_sy + 1][k/STEP].w * b_shared[k+3][tid_sx / STEP].y;
+            c_reg[1].z += a_shared[tid_sy + 1][k/STEP].w * b_shared[k+3][tid_sx / STEP].z;
+            c_reg[1].w += a_shared[tid_sy + 1][k/STEP].w * b_shared[k+3][tid_sx / STEP].w;
+
+            c_reg[2].x += a_shared[tid_sy + 2][k/STEP].w * b_shared[k+3][tid_sx / STEP].x;
+            c_reg[2].y += a_shared[tid_sy + 2][k/STEP].w * b_shared[k+3][tid_sx / STEP].y;
+            c_reg[2].z += a_shared[tid_sy + 2][k/STEP].w * b_shared[k+3][tid_sx / STEP].z;
+            c_reg[2].w += a_shared[tid_sy + 2][k/STEP].w * b_shared[k+3][tid_sx / STEP].w;
+
+            c_reg[3].x += a_shared[tid_sy + 3][k/STEP].w * b_shared[k+3][tid_sx / STEP].x;
+            c_reg[3].y += a_shared[tid_sy + 3][k/STEP].w * b_shared[k+3][tid_sx / STEP].y;
+            c_reg[3].z += a_shared[tid_sy + 3][k/STEP].w * b_shared[k+3][tid_sx / STEP].z;
+            c_reg[3].w += a_shared[tid_sy + 3][k/STEP].w * b_shared[k+3][tid_sx / STEP].w;
+        }
+
+        // 再次同步，避免该块内个别线程已经计算完进入下一次循环中，往共享内存写数据，与正在共享内存正在计算中的数据相冲突
+        __syncthreads();
+    }
+
+    for (int si=0; si<STEP; si++) {
+        C[(gid_sy+si) * ldc + gid_sx+0] += c_reg[si].x;
+        C[(gid_sy+si) * ldc + gid_sx+1] += c_reg[si].y;
+        C[(gid_sy+si) * ldc + gid_sx+2] += c_reg[si].z;
+        C[(gid_sy+si) * ldc + gid_sx+3] += c_reg[si].w;
+    }
+}
+
+float MatrixMulCUDA(int version_id, int step,
+                    const int M, const int N, const int K,
                     const float *A, const int lda,
                     const float *B, const int ldb,
                     float *C, const int ldc) {
@@ -467,12 +563,53 @@ float MatrixMulCUDA(int version_id, const int M, const int N, const int K,
             (M, N, K, A, lda, B, ldb, C, ldc);   
     }
     else if (version_id == 4) {
-        // 一个线程处理四个数据，block数量xy方向都减半，然后一个block的线程数量不变。
-        const int step = 2;
-        dim3 blocks_per_grid_r(blocks_per_grid.x/step, blocks_per_grid.y/step);
-        GemmKernelv4<block_side_size, step> << <blocks_per_grid_r, threads_per_block >> >
-            (M, N, K, A, lda, B, ldb, C, ldc);
+        if (step == 2) {
+            // 一个线程处理2*2个数据，block数量xy方向都减半，然后一个block的线程数量不变。
+            const int STEP = 2;
+            dim3 blocks_per_grid_r(blocks_per_grid.x/STEP, blocks_per_grid.y/STEP);
+            GemmKernelv4<block_side_size, STEP> << <blocks_per_grid_r, threads_per_block >> >
+                (M, N, K, A, lda, B, ldb, C, ldc);            
+        }
+        else if (step == 4) {
+            // 一个线程处理4*4个数据，一个block的线程数量xy方向都减4倍，block数量不变。不然共享内存占用太多。
+            // 虽计算访存比增加，但因一个block线程数太少，无法提高使用率，起不到加速作用。
+            const int STEP = 4;
+            dim3 threads_per_block_r(block_side_size/STEP, block_side_size/STEP);
+            GemmKernelv4<block_side_size/STEP, STEP> << <blocks_per_grid, threads_per_block_r >> >
+                (M, N, K, A, lda, B, ldb, C, ldc);            
+        }
+        else if (step == 22) {
+            // 一个线程处理4*4个数据，一个block的线程数量xy方向都减半，block数量xy方向也减半。
+            const int STEP = 4;
+            dim3 threads_per_block_r(block_side_size/2, block_side_size/2);
+            dim3 blocks_per_grid_r(blocks_per_grid.x/2, blocks_per_grid.y/2);
+            GemmKernelv4<block_side_size/2, STEP> << <blocks_per_grid_r, threads_per_block_r >> >
+                (M, N, K, A, lda, B, ldb, C, ldc);            
+        }
+        else if (step == 8) {
+            // 一个线程处理4*4个数据，一个block的线程数量xy方向都减半，block数量xy方向也减半。
+            const int STEP = 8;
+            dim3 threads_per_block_r(block_side_size/4, block_side_size/4);
+            dim3 blocks_per_grid_r(blocks_per_grid.x/2, blocks_per_grid.y/2);
+            GemmKernelv4<block_side_size/4, STEP> << <blocks_per_grid_r, threads_per_block_r >> >
+                (M, N, K, A, lda, B, ldb, C, ldc);            
+        }
     }
+    else if (version_id == 5) {
+        if (step == 4) {
+            // 一个线程处理4*4个数据，一个block的线程数量xy方向都减半，block数量xy方向也减半。
+            const int STEP = 4;
+            dim3 threads_per_block_r(block_side_size/STEP, block_side_size/STEP);
+            GemmKernelv5<block_side_size/STEP, STEP> << <blocks_per_grid, threads_per_block_r >> >
+                (M, N, K, A, lda, B, ldb, C, ldc);            
+
+            // const int STEP = 4;
+            // dim3 threads_per_block_r(block_side_size/2, block_side_size/2);
+            // dim3 blocks_per_grid_r(blocks_per_grid.x/2, blocks_per_grid.y/2);
+            // GemmKernelv4<block_side_size/2, STEP> << <blocks_per_grid_r, threads_per_block_r >> >
+            //     (M, N, K, A, lda, B, ldb, C, ldc);    
+        }
+    }        
 
     // Record the stop event
     gpu_timer.Stop();
@@ -480,13 +617,13 @@ float MatrixMulCUDA(int version_id, const int M, const int N, const int K,
     return gpu_timer.ElapsedMillis();
 }
 
-#define TEST_CUDA_MODULE_UKERNEL(version_id)                                  \
+#define TEST_CUDA_MODULE_UKERNEL(version_id, step)                            \
     do {                                                                      \
         CUDA_CHECK(cudaMemcpy(d_a, h_a, mem_size_a, cudaMemcpyHostToDevice)); \
         CUDA_CHECK(cudaMemcpy(d_b, h_b, mem_size_b, cudaMemcpyHostToDevice)); \
-        msec_total = MatrixMulCUDA(version_id, height_a, width_b, width_a, d_a, width_a, d_b, width_b, d_c, width_b); \
+        msec_total = MatrixMulCUDA(version_id, step, height_a, width_b, width_a, d_a, width_a, d_b, width_b, d_c, width_b); \
         CUDA_CHECK(cudaMemcpy(h_c, d_c, mem_size_c, cudaMemcpyDeviceToHost)); \
-        printf("gpu version %d -> time: %f s, mean value = %f\n", version_id, msec_total/1000.f, GetMean(h_c, height_a, width_b)); \
+        printf("gpu version %d step %2d -> time: %f s, mean value = %f\n", version_id, step, msec_total/1000.f, GetMean(h_c, height_a, width_b)); \
     } while (0)
 
 int main() {
@@ -497,11 +634,11 @@ int main() {
     }
 
     // // Normal test
-    // int height_a = 1280, width_a = 4096;
-    // int height_b = 4096, width_b = 2048;
+    int height_a = 1280, width_a = 4096;
+    int height_b = 4096, width_b = 2048;
     // // Test split-k
-    int height_a = 64, width_a = 4096;
-    int height_b = 4096, width_b = 64;
+    // int height_a = 64, width_a = 4096;
+    // int height_b = 4096, width_b = 64;
     // // Debug
     // int height_a = 32, width_a = 64;
     // int height_b = 64, width_b = 32;
@@ -546,10 +683,15 @@ int main() {
     CUDA_CHECK(cudaMalloc((void **)&d_b, mem_size_b));
     CUDA_CHECK(cudaMalloc((void **)&d_c, mem_size_c));
 
-    TEST_CUDA_MODULE_UKERNEL(1);
-    TEST_CUDA_MODULE_UKERNEL(2);
-    TEST_CUDA_MODULE_UKERNEL(3);
-    TEST_CUDA_MODULE_UKERNEL(4);
+    TEST_CUDA_MODULE_UKERNEL(1, 1);
+    TEST_CUDA_MODULE_UKERNEL(2, 1);
+    TEST_CUDA_MODULE_UKERNEL(3, 1);
+    TEST_CUDA_MODULE_UKERNEL(4, 2);
+    TEST_CUDA_MODULE_UKERNEL(4, 4);
+    TEST_CUDA_MODULE_UKERNEL(4, 22);
+    TEST_CUDA_MODULE_UKERNEL(4, 8);
+    TEST_CUDA_MODULE_UKERNEL(5, 4);
+
     // printf("Print output C:\n");
     // for (int i=0; i<height_a; i++) {
     //     for (int j=0; j<width_b; j++) {
@@ -560,17 +702,21 @@ int main() {
 
     // Normal test.
     // GPU Device 0: "Tesla T4" with compute capability 7.5 with 40 multi-processors.
-    // gpu version 1 -> time: 0.033448 s, mean value = 1178.585693
-    // gpu version 2 -> time: 0.026014 s, mean value = 1178.585693
-    // gpu version 3 -> time: 0.026905 s, mean value = 1178.585693
-    // gpu version 4 -> time: 0.012337 s, mean value = 1178.585693
+    // gpu version 1 step  1 -> time: 0.031672 s, mean value = 917.531372
+    // gpu version 2 step  1 -> time: 0.024245 s, mean value = 917.531372
+    // gpu version 3 step  1 -> time: 0.025030 s, mean value = 917.531372
+    // gpu version 4 step  2 -> time: 0.012044 s, mean value = 917.531372
+    // gpu version 4 step  4 -> time: 0.013400 s, mean value = 917.531372
+    // gpu version 4 step 22 -> time: 0.008451 s, mean value = 917.531372
+    // gpu version 4 step  8 -> time: 0.016665 s, mean value = 917.531372
+    // gpu version 5 step  4 -> time: 0.008395 s, mean value = 917.531372
 
     // Test split-k
     // gpu version 1 -> time: 0.000979 s, mean value = 2628.805664
     // gpu version 2 -> time: 0.000694 s, mean value = 2628.805664
     // gpu version 3 -> time: 0.000352 s, mean value = 2628.805664 // split-2
     // gpu version 4 -> time: 0.000965 s, mean value = 2628.805664
-    
+
     free(h_a);
     free(h_b);
     free(h_c);
