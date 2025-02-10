@@ -1,3 +1,3 @@
-[submodule "3rdparty/pocket-ai"]
-	path = 3rdparty/pocket-ai
-	url = https://github.com/cjmcv/pocket-ai.git
+[submodule "sglang"]
+	path = sglang
+	url = https://github.com/cjmcv/sglang.git

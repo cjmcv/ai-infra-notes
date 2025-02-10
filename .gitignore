@@ -1,14 +1,6 @@
 # Folder
 .vscode/
 
-opencl/env/bin
-opencl/env/build-win-x86
-opencl/env/build-android-armv7
-
-vulkan/env/bin
-vulkan/env/build-win-x86
-vulkan/env/build-android-armv7
-
 # Prerequisites
 *.d
 
