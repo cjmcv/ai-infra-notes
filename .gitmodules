@@ -1,3 +1,6 @@
 [submodule "sglang"]
 	path = sglang
 	url = https://github.com/cjmcv/sglang.git
+[submodule "lighteval"]
+	path = lighteval
+	url = https://github.com/cjmcv/lighteval.git
