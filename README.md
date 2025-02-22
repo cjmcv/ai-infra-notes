@@ -2,6 +2,19 @@
 
 AI Infra 相关开源代码的阅读笔记，笔记均以代码注释的方式呈现。
 
+## 笔记列表
+
+笔记部分会用 <NT> 标记，可以搜索查看
+
+| 项目名 | 笔记范围 | 笔记量 | 二次开发 |
+| :---: | :--- | :--- | :---: |
+| sglang | 整体精读 | ?????????? | / |
+| lighteval | metrics评价指标部分 | ?? |[pocket-ai/eval/llm](https://github.com/cjmcv/pocket-ai/tree/master/eval/llm) |
+| vllm | 部分阅读 | ?? | / |
+| mlc-llm | 部分阅读 | ?? | / |
+
+* 注意：如发现中文显示乱码，可尝试按GB2312或UTF8格式查看。以vscode为例，点击右下角的编码格式，选Reopen with Encoding，切换到GB2312或UTF8查看。
+
 ## 仓库管理方式
 
 1. 将想深入阅读代码的仓库fork下来，保留主分支用于同步代码.
@@ -31,14 +44,3 @@ cd ai-infra-notes
 git submodule init sglang
 git submodule update sglang
 ```
-
-## 笔记列表
-
-笔记部分会用 <NT> 标记，可以搜索查看
-
-| 项目名 | 笔记范围 | 二次开发 |
-| :---: | :--- | :---: |
-| sglang | 整体精读 | / |
-| lighteval | metrics评价指标部分 | [pocket-ai/eval/llm](https://github.com/cjmcv/pocket-ai/tree/master/eval/llm) |
-| vllm | 部分阅读 | / |
-| mlc-llm | 部分阅读 | / 
