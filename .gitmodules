@@ -4,3 +4,6 @@
 [submodule "lighteval"]
 	path = lighteval
 	url = https://github.com/cjmcv/lighteval.git
+[submodule "cutlass"]
+	path = cutlass
+	url = https://github.com/cjmcv/cutlass.git
