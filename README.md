@@ -7,7 +7,7 @@ AI Infra 相关开源代码的阅读笔记，笔记均以代码注释的方式呈现。
 | 项目名 | 笔记范围 | 笔记量 | 二次开发 |
 | :---: | :--- | :--- | :---: |
 | sglang | 整体精读 | :star::star::star::star::star: | / |
-| cutlass | 部分阅读 | :star::star: | / |
+| cutlass | 部分阅读 | :star::star::star: | / |
 | lighteval | metrics评价指标部分 | :star: |[pocket-ai/eval/llm](https://github.com/cjmcv/pocket-ai/tree/master/eval/llm) |
 | vllm | 部分阅读 | :star: | / |
 | mlc-llm | 部分阅读 | :star: | / |
@@ -22,7 +22,7 @@ git submodule init sglang
 git submodule update sglang
 ```
 
-笔记部分会用 <NT> 标记，可以搜索查看
+笔记部分会用 `<NT>` 标记，可以搜索查看
 
 * 注意：如发现中文显示乱码，可尝试按GB2312或UTF8格式查看。以vscode为例，点击右下角的编码格式，选Reopen with Encoding，切换到GB2312或UTF8查看。
 
