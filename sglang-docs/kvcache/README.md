@@ -190,7 +190,7 @@ graph LR
 - **介绍：** 继承于`RadixCache`，并额外添加了`HostKVCache`和`HiCacheController`及其相关操作，扩展多层级kvcache offload。
 - **主要函数：**
   - `write_backup`: 将要写的数据通过cache_controller提交到队列中，返回host内存的索引，并标记到node.host_value中。如果没有返回索引，则表示host的内存池里没有空槽位，需要先清除掉一些数据挪腾位置出来，再进行上面的操作。因为是异步拷贝，所以使用ongoing_write_through去记录正在拷贝的节点，拷贝结束再清除。
-  - `load_back`: `write_backup`是单个节点的写入，`load_back`是以last_node为起点，往parent方向的整条前缀路径的所有节点的加载。
+  - `load_back`: `write_backup`是单个节点的写入，`load_back`是以last_node为起点，往parent方向的整条前缀路径的所有节点的加载。由`init_load_back`在`Scheduler.get_new_batch_prefill`里调用，里计算还有一定时延，可能可以覆盖第一层的数据加载？
   - `writing_check`: 检查清理 write_backup 中启动的已完成的写回操作。
   - `loading_check`: 与`writing_check`一致，清理已启动已完成的加载操作。 
   - `evict`: 大体与 RadixCache.evict 一样，先收集树的叶子节点构建小顶堆，并从小到大逐个pop出，进行检索。主要差别在 if x.host_value 部分，这里的 write_policy 目前版本默认是 "write_through_selective"，如果 x 的数据没有被写入到 host 端，则直接释放显存并删除节点。如果 x 的数据有被写入到 host 端，则删除device数据，保留host端备份。

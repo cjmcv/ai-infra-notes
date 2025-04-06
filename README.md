@@ -1,16 +1,21 @@
-# Reading notes on open source code of AI infrastructure
+# Reading notes on open source code of AI infrastructure (LLM, Inference, HPC)
 
-AI Infra 相关开源代码的阅读笔记，笔记均以代码注释的方式呈现。
+AI Infra 相关开源代码的阅读笔记，笔记主要以代码注释的方式呈现，极个别内容会添加文档笔记以辅助源码阅读。
 
 ## 笔记列表
 
-| 项目名 | 笔记范围 | 笔记量 | 二次开发 |
-| :---: | :--- | :--- | :---: |
-| sglang | 整体精读 | :star::star::star::star::star: | / |
-| cutlass | 部分阅读 | :star::star::star: | / |
-| lighteval | metrics评价指标部分 | :star: |[pocket-ai/eval/llm](https://github.com/cjmcv/pocket-ai/tree/master/eval/llm) |
-| vllm | 部分阅读 | :star: | / |
-| mlc-llm | 部分阅读 | :star: | / |
+| 项目名 | 笔记范围 | 笔记量 | 推荐系数 | 二次开发 |
+| :---: | :--- | :--- | :---: | :---: |
+| sglang | 整体精读 | 330 | :star::star::star: | / |
+| cutlass | 部分阅读 | 16 | :star::star: | / |
+| lighteval | metrics评价指标部分 | 3 |:star: |[pocket-ai/eval/llm](https://github.com/cjmcv/pocket-ai/tree/master/eval/llm) |
+| vllm | 部分阅读 | 20 |:star: | / |
+
+## 文档笔记
+
+| 项目名 | 主题 |
+| :---: | :--- |
+| sglang | [kvcache代码梳理](https://github.com/cjmcv/ai-infra-notes/tree/master/sglang-docs/kvcache) |
 
 ## 浏览笔记方式
 
