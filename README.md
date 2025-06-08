@@ -1,14 +1,14 @@
 # Reading notes on open source code of AI infrastructure (LLM, Inference, HPC)
 
-AI Infra 相关开源代码的阅读笔记，笔记主要以代码注释的方式呈现，极个别内容会添加文档笔记以辅助源码阅读。
+AI Infra 相关开源代码的阅读笔记，笔记主要以代码注释的方式呈现 (用 `<NT>` 标记)，极个别内容会添加文档笔记以辅助源码阅读。
 
 ## 笔记列表
 
-| 项目名 | 笔记范围 | 笔记量 | 推荐系数 | 二次开发 |
+| 项目名 | 笔记范围 | 笔记量 | 推荐系数 | 最后更新日期 |
 | :---: | :--- | :--- | :---: | :---: |
-| sglang | 整体精读 | 330 | :star::star::star: | / |
-| cutlass | 部分阅读 | 16 | :star::star: | / |
-| lighteval | metrics评价指标部分 | 3 |:star: |[pocket-ai/eval/llm](https://github.com/cjmcv/pocket-ai/tree/master/eval/llm) |
+| sglang | 整体精读 | 371 | :star::star::star: | 20250608 | 
+| cutlass | 部分阅读 | 40 | :star::star: | 20250530 |
+| lighteval | metrics评价指标部分 | 3 |:star: | 20250210 |
 | vllm | 部分阅读 | 20 |:star: | / |
 
 ## 文档笔记
