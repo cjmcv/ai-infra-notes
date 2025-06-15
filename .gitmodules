@@ -7,3 +7,6 @@
 [submodule "cutlass"]
 	path = cutlass
 	url = https://github.com/cjmcv/cutlass.git
+[submodule "flash-attention"]
+	path = flash-attention
+	url = https://github.com/cjmcv/flash-attention.git
