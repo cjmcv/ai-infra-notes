@@ -2,21 +2,24 @@
 
 AI Infra 相关开源代码的阅读笔记，笔记主要以代码注释的方式呈现 (用 `<NT>` 标记)，极个别内容会添加文档笔记以辅助源码阅读。
 
-## 笔记列表
+## 笔记列表-源码注解
 
-| 项目名 | 笔记范围 | 笔记量 | 推荐系数 | 最后更新日期 |
+| 项目名 | 笔记范围 | 笔记量 | 重要系数 | 最后更新日期 |
 | :---: | :--- | :--- | :---: | :---: |
-| sglang | 整体精读 | 376 | :star::star::star: | 20250608 | 
-| cutlass | 部分阅读 | 40 | :star::star: | 20250530 |
-| flash-attention | /hopper/ | 32 | :star::star: | 20250608 |
-| lighteval | metrics评价指标部分 | 3 |:star: | 20250210 |
-| vllm | 部分阅读 | 20 |:star: | / |
+| sglang | 整体精读 | 380 | :star::star::star: | 20250608 | 
+| cutlass | 部分阅读 | 51 | :star::star::star: | 20250620 |
+| flash-attention | /hopper/ | 94 | :star::star: | 20250620 |
+| lighteval | metrics评价指标部分 | 4 |:star: | 20250210 |
 
-## 文档笔记
+## 文档/图片笔记-docs
 
-| 项目名 | 主题 |
-| :---: | :--- |
-| sglang | [kvcache代码梳理](https://github.com/cjmcv/ai-infra-notes/tree/master/sglang-docs/kvcache) |
+| 项目名 | 主题 | 最后更新日期 |
+| :---: | :--- | :---: | 
+| sglang | [kvcache代码梳理](https://github.com/cjmcv/ai-infra-notes/tree/master/docs/sglang/kvcache) | 20250326 |
+| sglang | [基本结构](https://github.com/cjmcv/ai-infra-notes/tree/master/docs/sglang/sglang-architecture-20250117.jpg) | 20250117 |
+| flash-attention | [基本代码结构](https://github.com/cjmcv/ai-infra-notes/tree/master/docs/flash-attention/flash-attention-code-structure-20250620.png) | 20250620 |
+| flash-attention | [基础模块关系](https://github.com/cjmcv/ai-infra-notes/tree/master/docs/flash-attention/flash-attention-module-relationship-20250620.png) | 20250620 |
+| lighteval | [评价指标梳理](https://github.com/cjmcv/ai-infra-notes/tree/master/docs/lighteval/lighteval-metrics-20250218.jpg) | 20250218 |
 
 ## 浏览笔记方式
 
