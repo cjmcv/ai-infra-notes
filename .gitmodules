@@ -13,3 +13,6 @@
 [submodule "SageAttention"]
 	path = SageAttention
 	url = https://github.com/cjmcv/SageAttention.git
+[submodule "marlin"]
+	path = marlin
+	url = https://github.com/cjmcv/marlin.git
